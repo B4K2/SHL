@@ -1,0 +1,17 @@
+.git
+.gitignore
+.github
+.venv
+data
+*.npz
+__pycache__
+.pytest_cache
+.ruff_cache
+.env
+.env.example
+*.pdf
+sample_conversations
+scripts/__pycache__
+shl_product_catalog.json
+Dockerfile
+.dockerignore

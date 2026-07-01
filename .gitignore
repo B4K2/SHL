@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+data/
+*.npz
+.pytest_cache/
+.ruff_cache/
+
+# Local design/reference material — not part of the deployable service
+*.pdf
+shl_product_catalog.json
+sample_conversations/
