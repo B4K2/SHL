@@ -22,7 +22,7 @@ TRANSIENT_ERRORS = (RateLimitError, InternalServerError, APITimeoutError, APICon
 
 _REFUSAL_FALLBACK = ChatResponse(
     reply="I can only help with selecting SHL assessments. Could you tell me about the role you're hiring for?",
-    recommendations=[],
+    recommendations=None,
     end_of_conversation=False,
 )
 
@@ -126,7 +126,7 @@ class Agent:
                 break
         return ChatResponse(
             reply=_strip_id_references(str(arguments.get("reply", ""))),
-            recommendations=recommendations,
+            recommendations=recommendations or None,
             end_of_conversation=bool(arguments.get("end_of_conversation", False)),
         )
 
