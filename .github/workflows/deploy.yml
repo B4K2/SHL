@@ -17,7 +17,7 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: shl-recommender
   ECS_CLUSTER: shl-recommender
-  ECS_SERVICE: shl-recommender
+  ECS_SERVICE: shl-recommender-service-3vgz7vqk
 
 jobs:
   deploy:

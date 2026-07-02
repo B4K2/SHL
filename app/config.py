@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     request_timeout_seconds: float = 25.0
     max_recommendations: int = 10
+    search_k: int = 20
     max_completion_retries: int = 4
 
 

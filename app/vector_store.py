@@ -1,3 +1,5 @@
+import re
+from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -17,9 +19,18 @@ class VectorStore:
         self._by_id = {record.id: record for record in records}
         self._index = faiss.IndexFlatIP(vectors.shape[1])
         self._index.add(vectors)
+        self._name_token_index = _build_rare_token_index(records)
 
     def get(self, record_id: str) -> CatalogRecord | None:
         return self._by_id.get(record_id)
+
+    def match_name(self, text: str, limit: int = 5) -> list[CatalogRecord]:
+        hit_counts: dict[str, int] = defaultdict(int)
+        for token in _tokens(text):
+            for record_id in self._name_token_index.get(token, ()):
+                hit_counts[record_id] += 1
+        ranked = sorted(hit_counts.items(), key=lambda pair: pair[1], reverse=True)
+        return [self._by_id[record_id] for record_id, _ in ranked[:limit]]
 
     @property
     def dimension(self) -> int:
@@ -49,6 +60,30 @@ class VectorStore:
             if len(results) >= k:
                 break
         return results
+
+
+_RARE_TOKEN_MAX_RECORDS = 5
+_STOPWORDS = {"the", "and", "for", "with", "new", "out", "what"}
+
+
+def _tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9+#.]+", text.lower())
+        if len(token) >= 3 and token not in _STOPWORDS
+    }
+
+
+def _build_rare_token_index(records: list[CatalogRecord]) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = defaultdict(list)
+    for record in records:
+        for token in _tokens(record.name):
+            index[token].append(record.id)
+    return {
+        token: record_ids
+        for token, record_ids in index.items()
+        if len(record_ids) <= _RARE_TOKEN_MAX_RECORDS
+    }
 
 
 def save_vectors(path: str | Path, ids: list[str], vectors: np.ndarray) -> None:

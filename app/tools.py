@@ -29,7 +29,8 @@ SEARCH_CATALOG_TOOL = {
                 },
                 "max_duration_minutes": {
                     "type": "integer",
-                    "description": "Only assessments at or under this many minutes.",
+                    "description": "Only assessments at or under this many minutes. Items with "
+                    "unknown duration are kept.",
                 },
                 "job_level": {
                     "type": "string",
@@ -37,7 +38,9 @@ SEARCH_CATALOG_TOOL = {
                 },
                 "language": {
                     "type": "string",
-                    "description": "Required language, e.g. 'French', 'English (USA)'.",
+                    "description": "Required language, e.g. 'French', 'English (USA)'. The languages "
+                    "list in results may be truncated ('+N more') — to check whether an assessment "
+                    "supports a language, search WITH this filter instead of inspecting the list.",
                 },
             },
             "required": ["query"],
@@ -53,7 +56,11 @@ SUBMIT_TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "reply": {"type": "string"},
+                "reply": {
+                    "type": "string",
+                    "description": "Natural-language text shown to the user. Refer to assessments "
+                    "by name only — NEVER include catalog ids or URLs in this text.",
+                },
                 "recommendation_ids": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -84,7 +91,7 @@ def _build_predicate(
             return False
         if max_duration_minutes is not None:
             minutes = record.duration_minutes()
-            if minutes is None or minutes > max_duration_minutes:
+            if minutes is not None and minutes > max_duration_minutes:
                 return False
         if job_level and not any(job_level.lower() in jl.lower() for jl in record.job_levels):
             return False
@@ -96,13 +103,16 @@ def _build_predicate(
 
 
 def _candidate(record: CatalogRecord) -> dict:
+    languages = record.languages
+    if len(languages) > 8:
+        languages = languages[:6] + [f"+{len(record.languages) - 6} more"]
     return {
         "id": record.id,
         "name": record.name,
         "test_type": record.test_type,
         "duration": record.duration or "unspecified",
         "job_levels": record.job_levels,
-        "languages": record.languages[:6],
+        "languages": languages,
         "description": record.description[:240],
     }
 
@@ -125,5 +135,21 @@ async def run_search_catalog(
         arguments.get("job_level"),
         arguments.get("language"),
     )
-    results = store.search(query_vector, k=settings.max_recommendations, predicate=predicate)
-    return json.dumps({"results": [_candidate(record) for record, _ in results]})
+    results = store.search(query_vector, k=settings.search_k, predicate=predicate)
+    records = [record for record, _ in results]
+    seen_ids = {record.id for record in records}
+    for exact in store.match_name(arguments["query"]):
+        if exact.id in seen_ids:
+            continue
+        if predicate and not predicate(exact):
+            continue
+        records.insert(0, exact)
+        seen_ids.add(exact.id)
+
+    payload: dict = {"results": [_candidate(record) for record in records[: settings.search_k]]}
+    if not records and predicate is not None:
+        payload["note"] = (
+            "The filters eliminated every match. Retry without filters (or with fewer), then tell "
+            "the user which stated constraint the catalog cannot satisfy."
+        )
+    return json.dumps(payload)

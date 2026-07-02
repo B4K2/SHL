@@ -1,17 +1,37 @@
-from typing import Literal
+import json
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Role = Literal["user", "assistant", "system"]
+KNOWN_ROLES = {"user", "assistant", "system"}
 
 
 class Message(BaseModel):
-    role: Role
-    content: str
+    model_config = ConfigDict(extra="ignore")
+
+    role: str = "user"
+    content: str = ""
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, value: Any) -> str:
+        role = str(value).strip().lower() if value is not None else "user"
+        return role if role in KNOWN_ROLES else "user"
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def coerce_content(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return json.dumps(value)
 
 
 class ChatRequest(BaseModel):
-    messages: list[Message]
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[Message] = Field(default_factory=list)
 
 
 class Recommendation(BaseModel):

@@ -33,7 +33,6 @@ class Agent:
         self._settings = settings
         self._store = store
 
-    # Added limit so that the model doesnt respond after 8 conv
     async def respond(self, messages: list[Message]) -> ChatResponse:
         for _ in range(MAX_GENERATION_RETRIES):
             response = await self._run_turn(messages)
@@ -42,8 +41,9 @@ class Agent:
         return _REFUSAL_FALLBACK
 
     async def _run_turn(self, messages: list[Message]) -> ChatResponse | None:
-        conversation: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        conversation.extend({"role": m.role, "content": m.content} for m in messages)
+        system_prompt = SYSTEM_PROMPT + _turn_note(messages)
+        conversation: list[dict] = [{"role": "system", "content": system_prompt}]
+        conversation.extend(_history_dict(m) for m in messages if m.content.strip())
 
         for round_index in range(MAX_TOOL_ROUNDS):
             force_submit = round_index == MAX_TOOL_ROUNDS - 1
@@ -125,10 +125,49 @@ class Agent:
             if len(recommendations) >= self._settings.max_recommendations:
                 break
         return ChatResponse(
-            reply=str(arguments.get("reply", "")),
+            reply=_strip_id_references(str(arguments.get("reply", ""))),
             recommendations=recommendations,
             end_of_conversation=bool(arguments.get("end_of_conversation", False)),
         )
+
+
+def _strip_id_references(reply: str) -> str:
+    return re.sub(r"\s*\(\s*id\s*[:#=]?\s*[\w-]+\s*\)", "", reply, flags=re.IGNORECASE)
+
+
+def _history_dict(message: Message) -> dict:
+    if message.role == "assistant":
+        return {"role": "assistant", "content": _flatten_assistant_content(message.content)}
+    return {"role": "user", "content": message.content}
+
+
+def _flatten_assistant_content(content: str) -> str:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    if not isinstance(parsed, dict) or "reply" not in parsed:
+        return content
+    text = str(parsed.get("reply", ""))
+    names = [
+        str(item["name"])
+        for item in parsed.get("recommendations") or []
+        if isinstance(item, dict) and item.get("name")
+    ]
+    if names:
+        text += "\n\n[Shortlist recommended this turn: " + "; ".join(names) + "]"
+    return text
+
+
+def _turn_note(messages: list[Message]) -> str:
+    user_turns = max(1, sum(1 for m in messages if m.role == "user" and m.content.strip()))
+    note = f"\n\nCurrent state: this is user turn {user_turns} of at most 4."
+    if user_turns >= 3:
+        note += (
+            " You are running low on turns — commit to a shortlist now with the constraints you"
+            " have instead of asking another clarifying question."
+        )
+    return note
 
 
 def _assistant_dict(message) -> dict:
