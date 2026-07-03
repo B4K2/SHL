@@ -1,4 +1,4 @@
-name: Deploy to ECS
+name: Deploy to EC2
 
 on:
   push:
@@ -10,14 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
-
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: shl-recommender
-  ECS_CLUSTER: shl-recommender
-  ECS_SERVICE: shl-recommender-service-3vgz7vqk
+  packages: write
 
 jobs:
   deploy:
@@ -26,39 +20,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve image references
+        id: img
+        run: |
+          # GHCR requires a fully lowercase repository path.
+          REPO_LC="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "image=ghcr.io/${REPO_LC}" >> "$GITHUB_OUTPUT"
+          echo "ref=ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
         env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          IMAGE: ${{ steps.img.outputs.image }}
         run: |
-          IMAGE="$REGISTRY/$ECR_REPOSITORY"
           docker build \
             --secret id=gemini_api_key,env=GEMINI_API_KEY \
             -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"
 
-      - name: Force new ECS deployment
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --region "$AWS_REGION"
+      - name: Deploy on EC2 over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GITHUB_ACTOR,GH_TOKEN,IMAGE_REF,CONTAINER_NAME,APP_PORT,GEMINI_API_KEY
+          script: |
+            set -euo pipefail
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            docker pull "$IMAGE_REF"
+            docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+            docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              -p 80:${APP_PORT} \
+              -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+              "$IMAGE_REF"
+            docker image prune -f
+            docker logout ghcr.io
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ steps.img.outputs.ref }}
+          CONTAINER_NAME: shl-recommender
+          APP_PORT: 8000
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Wait for service to stabilize
+      - name: Health check
         run: |
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
+          echo "Waiting for the service to become healthy (cold start can take ~2 min)..."
+          for i in $(seq 1 30); do
+            if curl -fsS "http://${{ secrets.EC2_HOST }}/health" | grep -q '"status"'; then
+              echo "Service is healthy."
+              exit 0
+            fi
+            echo "Attempt $i: not ready yet, retrying in 10s..."
+            sleep 10
+          done
+          echo "Service did not become healthy in time."
+          exit 1
