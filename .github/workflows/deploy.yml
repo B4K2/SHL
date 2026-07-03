@@ -37,11 +37,9 @@ jobs:
 
       - name: Build and push image
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           IMAGE: ${{ steps.img.outputs.image }}
         run: |
           docker build \
-            --secret id=gemini_api_key,env=GEMINI_API_KEY \
             -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
           docker push "$IMAGE:${{ github.sha }}"
           docker push "$IMAGE:latest"

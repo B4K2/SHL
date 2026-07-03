@@ -11,13 +11,6 @@ RUN uv sync --frozen --no-dev
 
 ADD https://tcp-us-prod-rnd.shl.com/voiceRater/shl-ai-hiring/shl_product_catalog.json ./shl_product_catalog.json
 
-COPY app ./app
-COPY scripts ./scripts
-
-RUN --mount=type=secret,id=gemini_api_key \
-    GEMINI_API_KEY="$(cat /run/secrets/gemini_api_key)" \
-    PYTHONPATH=/app .venv/bin/python scripts/build_index.py
-
 
 FROM python:3.12-slim-bookworm AS runtime
 
@@ -31,7 +24,7 @@ RUN groupadd --system app && useradd --system --gid app --home-dir /app appuser
 
 COPY --from=builder /app/.venv ./.venv
 COPY --from=builder /app/shl_product_catalog.json ./shl_product_catalog.json
-COPY --from=builder /app/data/catalog_embeddings.npz ./data/catalog_embeddings.npz
+COPY data/catalog_embeddings.npz ./data/catalog_embeddings.npz
 COPY app ./app
 
 RUN chown -R appuser:app /app

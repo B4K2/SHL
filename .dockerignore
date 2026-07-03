@@ -4,6 +4,7 @@
 .venv
 data
 *.npz
+!data/catalog_embeddings.npz
 __pycache__
 .pytest_cache
 .ruff_cache
